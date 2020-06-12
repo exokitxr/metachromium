@@ -4,10 +4,12 @@
 
 #### Building Metachromium
 --------------
+**Important: follow this path as written.** You might be tempted to simply apply the same Chromium build steps to the Metachromium repo. Don't. Google provides its own build system, plugins, config files and dotfiles in the metachromium repo that are crucial for the build process. The path of least resistance is as follows:
+
 1. **Familiarize** yourself with the general process of building Chromium [here](https://www.chromium.org/developers/how-tos/get-the-code). Learning how to build Chromium on your system can be a rocky road; keep in mind 90% of the process of building Metachromium will resemble building Chromium or Chrome.
 2. **Follow** the guide up to and including the step called `Get the Code`. 
 3. In a separate folder, **clone** this repo, then move or copy its files to the `src` directory in the Chromium repo. 
-**Important: do this thing. Do not try to just apply the same Chromium build steps steps to the metachromium repo.** Google has its own build system, plugins, config files and dotfiles that are crucial for the build process so the path of least resistance is as described.
+
 4. run `gclient sync` in the root folder. This will install additional files necessary for the build process.
 5. Follow the process from `Setting Up the Build` onwards. `autoninja -C out\Default chrome` fires off the build process but examine the build setup step and particularly `--filters` for ways to avoid enormous build times and focus on the bits you need from the codebase.
 
