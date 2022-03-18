@@ -1,0 +1,164 @@
+<!doctype html>
+<html>
+<head>
+<style>
+body {
+  margin: 0;
+}
+#canvas {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  right: 0;
+}
+/* .buttons {
+  display: flex;
+  position: absolute;
+  right: 30px;
+  bottom: 30px;
+} */
+</style>
+</head>
+<body>
+<canvas id=canvas></canvas>
+<!-- <div class=buttons>
+  <input type=button id=enter-vr-button value="Enter XR">
+</div> -->
+<script type=module>
+import * as THREE from 'https://raw.githack.com/mrdoob/three.js/dev/build/three.module.js';
+
+function _createSocket(u) {
+  try {
+    return new WebSocket(u);
+  } catch (err) {
+    return null;
+  }
+}
+
+{
+  const match = navigator.userAgent.match(/Mchr\/1\.0\s*\((.+?),\s*(.+?)\)/);
+  const port = parseInt(match[1], 10);
+  const key = match[2];
+  if (port && key) {
+    const s = _createSocket('ws://' + `localhost:${port}`);
+    if (s) {
+      s.onopen = () => {
+        s.send(JSON.stringify({
+          method: 'init',
+          key,
+        }));
+        s.onmessage = e => {
+          const j = JSON.parse(e.data);
+          const {method} = j;
+          switch (method) {
+            case 'qrCode': {
+              const m = j.data;        
+              if (m.length && m.length > 0) {
+                const qrText = m[0].text;
+                const qrPoints = m[0].points;
+
+                console.log('got qr', qrText, qrPoints); 
+              }
+              break;
+            }
+            default: {
+              console.warn('unknown websocket method', method);
+              break;
+            }
+          }
+        };
+      };
+    }
+  }
+}
+
+const canvas = document.getElementById('canvas');
+
+const renderer = new THREE.WebGLRenderer({
+  canvas,
+  antialias: true,
+});
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.sortObjects = false;
+renderer.physicallyCorrectLights = true;
+renderer.xr.enabled = true;
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+camera.position.set(0, 1, 2);
+
+const ambientLight = new THREE.AmbientLight(0xFFFFFF);
+scene.add(ambientLight);
+
+const directionalLight = new THREE.DirectionalLight(0xFFFFFF, 3);
+scene.add(directionalLight);
+
+const directionalLight2 = new THREE.DirectionalLight(0xFFFFFF, 3);
+scene.add(directionalLight2);
+
+const cubeMesh = (() => {
+  const geometry = new THREE.BoxBufferGeometry(0.1, 0.1, 0.1);
+  const material = new THREE.MeshStandardMaterial({
+    color: 0x42a5f5,
+  });
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.frustumCulled = false;
+  return mesh;
+})();
+cubeMesh.position.set(0, 1, 0);
+cubeMesh.rotation.order = 'YXZ';
+scene.add(cubeMesh);
+
+function animate() {
+  const f = (Date.now()%2000)/2000 * Math.PI*2;
+  cubeMesh.rotation.x = f;
+  cubeMesh.rotation.y = f;
+  cubeMesh.rotation.z = f;
+
+  renderer.render(scene, camera);
+}
+renderer.setAnimationLoop(animate);
+
+let currentSession = null;
+function onSessionStarted(session) {
+  session.addEventListener('end', onSessionEnded);
+
+  renderer.xr.setSession(session);
+
+  currentSession = session;
+}
+function onSessionEnded() {
+  currentSession.removeEventListener('end', onSessionEnded);
+
+  currentSession = null;
+}
+
+/* const enterVrPutton = document.getElementById('enter-vr-button');
+enterVrPutton.addEventListener('click', e => {
+  e.preventDefault();
+  e.stopPropagation();
+  
+  if (currentSession === null) {
+    navigator.xr.requestSession('immersive-vr', {
+      optionalFeatures: [
+        'local-floor',
+        'bounded-floor',
+      ],
+    }).then(onSessionStarted);
+  } else {
+    currentSession.end();
+  }
+});
+enterVrPutton.dispatchEvent(new MouseEvent('click')); */
+navigator.xr.requestSession('immersive-vr', {
+  optionalFeatures: [
+    'local-floor',
+    'bounded-floor',
+  ],
+}).then(onSessionStarted);
+
+</script>
+</body>
+</html>

@@ -15,6 +15,8 @@
 #include "device/vr/windows/d3d11_texture_helper.h"
 #endif
 
+#include <thread>
+
 namespace device {
 
 namespace {
@@ -69,7 +71,7 @@ void OpenVRRenderLoop::InputActiveState::MarkAsInactive() {
   controller_role = vr::TrackedControllerRole_Invalid;
 }
 
-OpenVRRenderLoop::OpenVRRenderLoop() : XRCompositorCommon() {}
+OpenVRRenderLoop::OpenVRRenderLoop() : XRCompositorCommon(), m_lastFrameIndex(0) {}
 
 OpenVRRenderLoop::~OpenVRRenderLoop() {
   Stop();
@@ -88,11 +90,11 @@ bool OpenVRRenderLoop::SubmitCompositedFrame() {
     return false;
 
   vr::Texture_t texture;
-  texture.handle = texture_helper_.GetBackbuffer().Get();
-  texture.eType = vr::TextureType_DirectX;
+  texture.handle = texture_helper_.GetSharedHandle();
+  texture.eType = vr::TextureType_DXGISharedHandle;
   texture.eColorSpace = vr::ColorSpace_Auto;
 
-  gfx::RectF left_bounds = texture_helper_.BackBufferLeft();
+  /* gfx::RectF left_bounds = texture_helper_.BackBufferLeft();
   gfx::RectF right_bounds = texture_helper_.BackBufferRight();
 
   vr::VRTextureBounds_t bounds[2];
@@ -101,18 +103,62 @@ bool OpenVRRenderLoop::SubmitCompositedFrame() {
                left_bounds.height() + left_bounds.y()};
   bounds[1] = {right_bounds.x(), right_bounds.y(),
                right_bounds.width() + right_bounds.x(),
-               right_bounds.height() + right_bounds.y()};
+               right_bounds.height() + right_bounds.y()}; */
 
-  vr::EVRCompositorError error =
+
+
+
+
+
+
+
+
+
+
+
+  vr::IVROverlay* vr_overlay = openvr_->GetOverlay();
+  vr::VROverlayHandle_t m_vargglesOverlay = openvr_->GetOverlayHandle();
+  TRACE_EVENT1("gpu", "OpenVR SubmitFrame 1", "m_vargglesOverlay", (void *)vr_overlay);
+  if (m_vargglesOverlay == vr::k_ulOverlayHandleInvalid)
+  {
+          TRACE_EVENT0("gpu", "ERROR: SetTexture on invalid overlay");
+          return false;
+  }
+
+  if (vr_overlay->SetOverlayTexture(m_vargglesOverlay, &texture) != vr::VROverlayError_None)
+  {
+          TRACE_EVENT0("gpu", "ERROR: SetTexture Failed on Varggles Overlay");
+          return false;
+  }
+
+  if (vr_overlay->ShowOverlay(m_vargglesOverlay) != vr::VROverlayError_None) {
+          TRACE_EVENT0("gpu", "ERROR: ShowOverlay failed");
+          return false;
+  }
+
+
+
+
+
+
+
+
+
+
+
+  /* vr::EVRCompositorError error =
       vr_compositor->Submit(vr::EVREye::Eye_Left, &texture, &bounds[0]);
+  TRACE_EVENT1("gpu", "OpenVR SubmitFrame 1", "error", error);
   if (error != vr::VRCompositorError_None) {
     return false;
   }
   error = vr_compositor->Submit(vr::EVREye::Eye_Right, &texture, &bounds[1]);
+  TRACE_EVENT1("gpu", "OpenVR SubmitFrame 2", "error", error);
   if (error != vr::VRCompositorError_None) {
     return false;
   }
-  vr_compositor->PostPresentHandoff();
+  TRACE_EVENT0("gpu", "OpenVR SubmitFrame 3");
+  vr_compositor->PostPresentHandoff(); */
   return true;
 }
 
@@ -125,8 +171,8 @@ bool OpenVRRenderLoop::StartRuntime() {
     }
 
     openvr_->GetCompositor()->SuspendRendering(true);
-    openvr_->GetCompositor()->SetTrackingSpace(
-        vr::ETrackingUniverseOrigin::TrackingUniverseSeated);
+    /* openvr_->GetCompositor()->SetTrackingSpace(
+        vr::ETrackingUniverseOrigin::TrackingUniverseSeated); */
   }
 
 #if defined(OS_WIN)
@@ -163,6 +209,7 @@ void OpenVRRenderLoop::OnSessionStart() {
   }
 
   openvr_->GetCompositor()->SuspendRendering(false);
+  // openvr_->GetCompositor()->SetTrackingSpace(vr::TrackingUniverseStanding);
 
   // Measure the VrViewerType we are presenting with.
   std::string model =
@@ -176,16 +223,99 @@ void OpenVRRenderLoop::OnSessionStart() {
   LogViewerType(type);
 }
 
+void setPoseMatrix(float *dstMatrixArray, const vr::HmdMatrix34_t &srcMatrix) {
+  for (unsigned int v = 0; v < 4; v++) {
+    for (unsigned int u = 0; u < 3; u++) {
+      dstMatrixArray[v * 4 + u] = srcMatrix.m[u][v];
+    }
+  }
+  dstMatrixArray[0 * 4 + 3] = 0;
+  dstMatrixArray[1 * 4 + 3] = 0;
+  dstMatrixArray[2 * 4 + 3] = 0;
+  dstMatrixArray[3 * 4 + 3] = 1;
+}
+
 mojom::XRFrameDataPtr OpenVRRenderLoop::GetNextFrameData() {
   mojom::XRFrameDataPtr frame_data = mojom::XRFrameData::New();
   frame_data->frame_id = next_frame_id_;
 
   if (openvr_) {
     vr::TrackedDevicePose_t rendering_poses[vr::k_unMaxTrackedDeviceCount];
+    
+    TRACE_EVENT0("gpu", "OpenVR WaitGetPoses 0");
 
-    TRACE_EVENT0("gpu", "WaitGetPoses");
-    openvr_->GetCompositor()->WaitGetPoses(
-        rendering_poses, vr::k_unMaxTrackedDeviceCount, nullptr, 0);
+    uint64_t newFrameIndex = 0;
+    float lastVSync = 0;
+
+    /* openvr_->GetSystem()->GetTimeSinceLastVsync(&lastVSync, &newFrameIndex);
+    if (newFrameIndex == m_lastFrameIndex) {
+      // Sleep(1);
+
+      vr::ETrackedPropertyError error;
+      float displayFrequency = vr::VRSystem()->GetFloatTrackedDeviceProperty(
+        vr::k_unTrackedDeviceIndex_Hmd,
+        vr::ETrackedDeviceProperty::Prop_DisplayFrequency_Float,
+        &error);
+      float frameDuration = 1.0f / displayFrequency;
+      float timeRemainingSeconds = std::max(frameDuration - lastVSync, 0.0f);
+      if (timeRemainingSeconds > 0) {
+        std::this_thread::sleep_for(std::chrono::microseconds((int)(timeRemainingSeconds * (1000000.0f * 0.75f))));
+      }
+
+      while (newFrameIndex == m_lastFrameIndex) {
+        openvr_->GetSystem()->GetTimeSinceLastVsync(&lastVSync, &newFrameIndex);
+      }
+    } */
+
+    do {
+      openvr_->GetSystem()->GetTimeSinceLastVsync(&lastVSync, &newFrameIndex);
+    } while (newFrameIndex == m_lastFrameIndex);
+    m_lastFrameIndex = newFrameIndex;
+
+    openvr_->GetCompositor()->GetLastPoses(
+            rendering_poses,
+            vr::k_unMaxTrackedDeviceCount,
+            nullptr,
+            0);
+
+
+
+
+
+
+
+
+    /* float secondsSinceLastVsync = lastVSync;
+    uint64_t newLastFrame = newFrameIndex;
+    vr::VRSystem()->GetTimeSinceLastVsync(&secondsSinceLastVsync, &newLastFrame);
+
+    vr::ETrackedPropertyError error;
+    float displayFrequency = vr::VRSystem()->GetFloatTrackedDeviceProperty(
+      vr::k_unTrackedDeviceIndex_Hmd,
+      vr::ETrackedDeviceProperty::Prop_DisplayFrequency_Float,
+      &error);
+
+    float frameDuration = 1.0f / displayFrequency;
+    float vsyncToPhotons = vr::VRSystem()->GetFloatTrackedDeviceProperty(
+      vr::k_unTrackedDeviceIndex_Hmd, 
+      vr::ETrackedDeviceProperty::Prop_SecondsFromVsyncToPhotons_Float, 
+      &error);
+
+    float predictedSecondsFromNow = frameDuration - secondsSinceLastVsync + vsyncToPhotons;
+    vr::VRSystem()->GetDeviceToAbsoluteTrackingPose(
+      vr::ETrackingUniverseOrigin::TrackingUniverseStanding, 
+      predictedSecondsFromNow, 
+      &rendering_poses[0], 
+      vr::k_unMaxTrackedDeviceCount); */
+
+
+
+
+
+
+
+    /* openvr_->GetCompositor()->WaitGetPoses(
+        rendering_poses, vr::k_unMaxTrackedDeviceCount, nullptr, 0); */
 
     frame_data->pose = mojo::ConvertTo<mojom::VRPosePtr>(
         rendering_poses[vr::k_unTrackedDeviceIndex_Hmd]);
@@ -201,6 +331,13 @@ mojom::XRFrameDataPtr OpenVRRenderLoop::GetNextFrameData() {
       frame_data->time_delta =
           base::TimeDelta::FromSecondsD(timing.m_flSystemTimeInSeconds);
     }
+    
+    // TRACE_EVENT1("gpu", "OpenVR WaitGetPoses 2", "size", frame_data->universeFromHmd.size());
+    
+    // frame_data->universeFromHmd.resize(16);
+    // setPoseMatrix(frame_data->universeFromHmd.data(), rendering_poses[vr::k_unTrackedDeviceIndex_Hmd].mDeviceToAbsoluteTracking);
+    
+    TRACE_EVENT0("gpu", "OpenVR WaitGetPoses 3");
   }
 
   return frame_data;

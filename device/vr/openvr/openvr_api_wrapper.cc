@@ -7,6 +7,7 @@
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "device/vr/test/test_hook.h"
+#include "base/trace_event/trace_event.h"
 
 namespace device {
 
@@ -29,6 +30,17 @@ vr::IVRSystem* OpenVRWrapper::GetSystem() {
   return system_;
 }
 
+vr::IVROverlay* OpenVRWrapper::GetOverlay() {
+  DCHECK(current_task_runner_->BelongsToCurrentThread());
+  return overlay_;
+}
+
+vr::VROverlayHandle_t OpenVRWrapper::GetOverlayHandle() {
+  DCHECK(current_task_runner_->BelongsToCurrentThread());
+  return m_vargglesOverlay;
+}
+
+
 void OpenVRWrapper::SetTestHook(VRTestHook* hook) {
   // This may be called from any thread - tests are responsible for
   // maintaining thread safety, typically by not changing the test hook
@@ -46,7 +58,10 @@ bool OpenVRWrapper::Initialize(bool for_rendering) {
   // device can only be used on this thread once initailized
   vr::EVRInitError init_error = vr::VRInitError_None;
   system_ =
-      vr::VR_Init(&init_error, vr::EVRApplicationType::VRApplication_Scene);
+      vr::VR_Init(&init_error, vr::EVRApplicationType::VRApplication_Overlay);
+      
+  TRACE_EVENT1("gpu", "OpenVR VR_Init 1", "system", (void *)system_);
+  TRACE_EVENT1("gpu", "OpenVR VR_Init 2", "init_error", (void *)init_error);
 
   if (init_error != vr::VRInitError_None) {
     LOG(ERROR) << vr::VR_GetVRInitErrorAsEnglishDescription(init_error);
@@ -58,7 +73,93 @@ bool OpenVRWrapper::Initialize(bool for_rendering) {
 
   if (for_rendering) {
     compositor_ = vr::VRCompositor();
+    overlay_ = vr::VROverlay();
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    const char* k_pchVargglesOverlayKey = "metachromium.varggles";
+    const char* k_pchVargglesOverlayName = "varggles";
+    const float k_fOverlayWidthInMeters = 3.f;
+    // const vr::ETrackingUniverseOrigin c_eTrackingOrigin = vr::TrackingUniverseStanding;
+    const vr::HmdMatrix34_t m_vargglesOverlayTransform{
+            {
+                    {1, 0, 0, 0},
+                    {0, 1, 0, 0},
+                    {0, 0, 1, -1}
+            }
+    };
+
+    // vr::VROverlayHandle_t m_vargglesOverlay = vr::k_ulOverlayHandleInvalid;
+    /// glm::mat4 m_vargglesLookRotation;
+
+    // uint64_t m_lastFrameIndex = 0;
+    // int m_framesSkipped = 0;
+    // int64_t m_updatePosesTimeoutMillis = 10;
+    
+    
+    
+    
+    
+    
+    
+    
+    // create, early out if error
+    if (vr::VROverlay()->CreateOverlay(
+                    k_pchVargglesOverlayKey,
+                    k_pchVargglesOverlayName,
+                    &m_vargglesOverlay)
+            != vr::VROverlayError_None)
+    {
+            TRACE_EVENT0("gpu", "ERROR: CreateOverlay failed");
+            m_vargglesOverlay = vr::k_ulOverlayHandleInvalid;
+            // return;
+    }
+
+    if (vr::VROverlay()->SetOverlayFlag(
+                    m_vargglesOverlay,
+                    vr::VROverlayFlags_Panorama,
+                    false)
+            != vr::VROverlayError_None)
+    {
+            TRACE_EVENT0("gpu", "ERROR: StereoPanorama failed");
+            // return;
+    }
+
+    if (vr::VROverlay()->SetOverlayFlag(
+                    m_vargglesOverlay,
+                    vr::VROverlayFlags_StereoPanorama,
+                    true)
+            != vr::VROverlayError_None)
+    {
+            TRACE_EVENT0("gpu", "ERROR: StereoPanorama failed");
+            // return;
+    }
+
+    if (vr::VROverlay()->SetOverlayWidthInMeters(m_vargglesOverlay, k_fOverlayWidthInMeters)
+            != vr::VROverlayError_None)
+    {
+            TRACE_EVENT0("gpu", "ERROR: SetOverlayWidth failed");
+            // return;
+    }
+
+    if (vr::VROverlay()->SetOverlayTransformTrackedDeviceRelative(
+                    m_vargglesOverlay,
+                    vr::k_unTrackedDeviceIndex_Hmd,
+                    &m_vargglesOverlayTransform)
+            != vr::VROverlayError_None)
+    {
+            TRACE_EVENT0("gpu", "ERROR: SetOverlayTransform failed");
+            // return;
+    }
   }
+  
+  TRACE_EVENT0("gpu", "OpenVR VR_Init 3");
 
   if (test_hook_) {
     // Allow our mock implementation of OpenVR to be controlled by tests.
@@ -75,11 +176,14 @@ bool OpenVRWrapper::Initialize(bool for_rendering) {
       test_hook_->AttachCurrentThread();
     }
   }
+  
+  TRACE_EVENT0("gpu", "OpenVR VR_Init 4");
 
   return true;
 }
 
 void OpenVRWrapper::Uninitialize() {
+  TRACE_EVENT0("gpu", "OpenVR VR_Shutdown 1");
   DCHECK(initialized_);
   initialized_ = false;
   system_ = nullptr;
@@ -89,6 +193,8 @@ void OpenVRWrapper::Uninitialize() {
   if (test_hook_)
     test_hook_->DetachCurrentThread();
   vr::VR_Shutdown();
+
+  TRACE_EVENT0("gpu", "OpenVR VR_Shutdown 2");
 
   any_initialized_ = false;
 }
